@@ -55,6 +55,7 @@ class DefaultFormatBundle3D:
         if "radar" in results:
             results["radar"] = DC(results["radar"].tensor)
 
+
         for key in ["voxels", "coors", "voxel_centers", "num_points"]:
             if key not in results:
                 continue
@@ -182,7 +183,11 @@ class Collect3D:
         data = {}
         for key in self.keys:
             if key not in self.meta_keys:
-                data[key] = results[key]
+                if key in results:
+                    data[key] = results[key]
+                else:
+                    # 없으면 skip
+                    continue
         for key in self.meta_keys:
             if key in results:
                 val = np.array(results[key])

@@ -36,13 +36,13 @@ class DepthLSSTransform(BaseDepthTransform):
             dbound=dbound,
         )
         self.dtransform = nn.Sequential(
-            nn.Conv2d(1, 8, 1),
+            nn.Conv2d(1, 8, 3, padding=1),
             nn.BatchNorm2d(8),
             nn.ReLU(True),
-            nn.Conv2d(8, 32, 5, stride=4, padding=2),
+            nn.Conv2d(8, 32, 3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(True),
-            nn.Conv2d(32, 64, 5, stride=2, padding=2),
+            nn.Conv2d(32, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(True),
         )
@@ -81,17 +81,29 @@ class DepthLSSTransform(BaseDepthTransform):
     @force_fp32()
     def get_cam_feats(self, x, d):
         B, N, C, fH, fW = x.shape
-
-        d = d.view(B * N, *d.shape[2:])
+        print(f"[DEBUG] d.shape = {d.shape}")  # ex: (1, 6, 6, 256, 704)
+    
+        # 1️⃣ 슬라이싱 → 1채널
+        d = d[:, :, 0:1, :, :]  # (B, N, 1, 256, 704)
+    
+        # 2️⃣ reshape → (B*N, 1, 256, 704)
+        d = d.view(B * N, 1, d.shape[-2], d.shape[-1])
+    
+        # 3️⃣ interpolate → feature map size 로 변환
+        import torch.nn.functional as F
+        d = F.interpolate(d, size=(fH, fW), mode='bilinear', align_corners=False)  # (B*N, 1, 32, 88)
+    
+        # 4️⃣ x 도 reshape
         x = x.view(B * N, C, fH, fW)
-
+    
+        # 5️⃣ concat → 이제 shape 맞음!
         d = self.dtransform(d)
         x = torch.cat([d, x], dim=1)
         x = self.depthnet(x)
-
+    
         depth = x[:, : self.D].softmax(dim=1)
         x = depth.unsqueeze(1) * x[:, self.D : (self.D + self.C)].unsqueeze(2)
-
+    
         x = x.view(B, N, self.C, self.D, fH, fW)
         x = x.permute(0, 1, 3, 4, 5, 2)
         return x

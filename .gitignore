@@ -136,3 +136,18 @@ runs/*
 # torch hipify generated files
 *_hip.*
 *.hip
+
+# data
+data/
+# pretrained models
+pretrained/
+# results
+results/
+# pyc files
+*.pyc
+__pycache__/
+# logs
+*.log
+# 기타
+.DS_Store
+.idea/

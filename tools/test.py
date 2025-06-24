@@ -112,7 +112,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    dist.init()
+    # dist.init()
 
     torch.backends.cudnn.benchmark = True
     torch.cuda.set_device(dist.local_rank())
@@ -159,7 +159,12 @@ def main():
                 ds_cfg.pipeline = replace_ImageToTensor(ds_cfg.pipeline)
 
     # init distributed env first, since logger depends on the dist info.
-    distributed = True
+    # distributed = True
+    if args.launcher == 'none':
+        distributed = False
+    else:
+        distributed = True
+        init_dist(args.launcher)
 
     # set random seeds
     if args.seed is not None:
@@ -200,6 +205,7 @@ def main():
             device_ids=[torch.cuda.current_device()],
             broadcast_buffers=False,
         )
+        # model = model.cuda()
         outputs = multi_gpu_test(model, data_loader, args.tmpdir, args.gpu_collect)
 
     rank, _ = get_dist_info()

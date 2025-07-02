@@ -18,7 +18,9 @@ from mmdet3d.utils import get_root_logger, convert_sync_batchnorm, recursive_eva
 
 
 def main():
-    dist.init()
+    print("[DEBUG : init 시도]")
+    # dist.init()
+    print("[DEBUG : init 완료]")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("config", metavar="FILE", help="config file")
@@ -31,7 +33,7 @@ def main():
     cfg = Config(recursive_eval(configs), filename=args.config)
 
     torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
-    torch.cuda.set_device(dist.local_rank())
+    torch.cuda.set_device(0)
 
     if args.run_dir is None:
         args.run_dir = auto_set_run_dir()
@@ -48,7 +50,7 @@ def main():
     logger = get_root_logger(log_file=log_file)
 
     # log some basic info
-    logger.info(f"Config:\n{cfg.pretty_text}")
+    logger.info(f"Config:\n{cfg.text}")
 
     # set random seeds
     if cfg.seed is not None:
@@ -62,10 +64,12 @@ def main():
         if cfg.deterministic:
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
-
+    print("[DEBUG] build_dataset 진입")
     datasets = [build_dataset(cfg.data.train)]
-
+    print("[DEBUG] build_dataset 완료")
+    print("[DEBUG] build_model 진입")
     model = build_model(cfg.model)
+    print("[DEBUG] build_model 완료")
     model.init_weights()
     if cfg.get("sync_bn", None):
         if not isinstance(cfg["sync_bn"], dict):
@@ -77,7 +81,7 @@ def main():
         model,
         datasets,
         cfg,
-        distributed=True,
+        distributed=False,
         validate=True,
         timestamp=timestamp,
     )

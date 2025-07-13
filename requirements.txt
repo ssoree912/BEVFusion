@@ -1,0 +1,23 @@
+# Python 3.8.x 환경
+torch==2.1.2+cu121
+torchvision==0.16.2+cu121
+# 설치 시: pip install torch==2.1.2+cu121 torchvision==0.16.2+cu121 -f https://download.pytorch.org/whl/torch_stable.html
+
+mmcv-full==1.7.1  # torch 2.1.x와 호환되는 마지막 mmcv 버전 중 하나
+mmdet==2.28.2     # mmcv 1.7.x와 호환되는 안정 버전
+
+# mmdet3d는 커스텀 로컬로 사용하므로 따로 설치하지 않음
+
+# nuScenes devkit
+nuscenes-devkit==1.1.11
+
+# 기타 필수 라이브러리
+Pillow==8.4.0
+torchpack==0.3.1
+tqdm
+
+# 추가적으로 필요할 수 있는 라이브러리
+numpy>=1.18.0
+pyyaml
+matplotlib
+opencv-python

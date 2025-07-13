@@ -48,7 +48,7 @@ def main():
     logger = get_root_logger(log_file=log_file)
 
     # log some basic info
-    logger.info(f"Config:\n{cfg.pretty_text}")
+    logger.info(f"Config loaded from {args.config}")
 
     # set random seeds
     if cfg.seed is not None:

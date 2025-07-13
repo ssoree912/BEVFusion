@@ -81,7 +81,7 @@ class DepthLSSTransform(BaseDepthTransform):
     @force_fp32()
     def get_cam_feats(self, x, d):
         B, N, C, fH, fW = x.shape
-        print(f"[DEBUG] d.shape = {d.shape}")  # ex: (1, 6, 6, 256, 704)
+        # print(f"[DEBUG] d.shape = {d.shape}")  # ex: (1, 6, 6, 256, 704)
     
         # 1️⃣ 슬라이싱 → 1채널
         d = d[:, :, 0:1, :, :]  # (B, N, 1, 256, 704)

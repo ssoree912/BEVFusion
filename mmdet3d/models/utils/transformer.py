@@ -68,7 +68,7 @@ class TransformerDecoderLayer(nn.Module):
     def with_pos_embed(self, tensor, pos_embed):
         return tensor if pos_embed is None else tensor + pos_embed
 
-    def forward(self, query, key, query_pos, key_pos, attn_mask=None):
+    def forward(self, query, key, query_pos, key_pos, attn_mask=None, return_attention=False):
         """
         :param query: B C Pq
         :param key: B C Pk
@@ -92,13 +92,13 @@ class TransformerDecoderLayer(nn.Module):
 
         if not self.cross_only:
             q = k = v = self.with_pos_embed(query, query_pos_embed)
-            query2 = self.self_attn(q, k, value=v)[0]
+            query2, self_attn_weights = self.self_attn(q, k, value=v)
             query = query + self.dropout1(query2)
             query = self.norm1(query)
 
-        query2 = self.multihead_attn(query=self.with_pos_embed(query, query_pos_embed),
+        query2, cross_attn_weights = self.multihead_attn(query=self.with_pos_embed(query, query_pos_embed),
                                      key=self.with_pos_embed(key, key_pos_embed),
-                                     value=self.with_pos_embed(key, key_pos_embed), attn_mask=attn_mask)[0]
+                                     value=self.with_pos_embed(key, key_pos_embed), attn_mask=attn_mask)
         query = query + self.dropout2(query2)
         query = self.norm2(query)
 
@@ -108,6 +108,12 @@ class TransformerDecoderLayer(nn.Module):
 
         # NxCxP to PxNxC
         query = query.permute(1, 2, 0)
+
+        if return_attention:
+            if self.cross_only:
+                return query, cross_attn_weights
+            else:
+                return query, self_attn_weights, cross_attn_weights
         return query
 
 

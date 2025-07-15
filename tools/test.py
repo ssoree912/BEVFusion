@@ -198,7 +198,37 @@ def main():
 
     if not distributed:
         model = MMDataParallel(model, device_ids=[0])
-        outputs = single_gpu_test(model, data_loader)
+        # outputs = single_gpu_test(model, data_loader)
+        
+        # MODIFIED FOR ATTENTION EXTRACTION
+        import torch.nn.functional as F
+        import pickle
+
+        # create directory to save attention maps
+        attention_dir = 'attention_outputs'
+        os.makedirs(attention_dir, exist_ok=True)
+
+        model.eval()
+        results = []
+        dataset = data_loader.dataset
+        prog_bar = mmcv.ProgressBar(len(dataset))
+        for i, data in enumerate(data_loader):
+            with torch.no_grad():
+                pred_dict, attention_weights = model(return_loss=False, return_attention=True, **data)
+            
+            # Save attention weights
+            sample_token = data['metas'][0].data[0][0]['token']
+            attention_path = os.path.join(attention_dir, f'{sample_token}_attention.pkl')
+            with open(attention_path, 'wb') as f:
+                pickle.dump(attention_weights, f)
+
+            # The rest is similar to the original single_gpu_test
+            results.extend(pred_dict)
+
+            batch_size = len(pred_dict)
+            for _ in range(batch_size):
+                prog_bar.update()
+        outputs = results
     else:
         model = MMDistributedDataParallel(
             model.cuda(),

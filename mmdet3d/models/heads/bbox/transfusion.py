@@ -298,14 +298,16 @@ class TransFusionHead(nn.Module):
         # transformer decoder layer (LiDAR feature as K,V)
         #################################
         ret_dicts = []
+        attention_weights = []
         for i in range(self.num_decoder_layers):
             prefix = "last_" if (i == self.num_decoder_layers - 1) else f"{i}head_"
 
             # Transformer Decoder Layer
             # :param query: B C Pq    :param query_pos: B Pq 3/6
-            query_feat = self.decoder[i](
-                query_feat, lidar_feat_flatten, query_pos, bev_pos
+            query_feat, self_attn, cross_attn = self.decoder[i](
+                query_feat, lidar_feat_flatten, query_pos, bev_pos, return_attention=True
             )
+            attention_weights.append({'self_attn': self_attn, 'cross_attn': cross_attn})
 
             # Prediction
             res_layer = self.prediction_heads[i](query_feat)
@@ -327,7 +329,7 @@ class TransFusionHead(nn.Module):
 
         if self.auxiliary is False:
             # only return the results of last decoder layer
-            return [ret_dicts[-1]]
+            return [ret_dicts[-1]], attention_weights
 
         # return all the layer's results for auxiliary superivison
         new_res = {}
@@ -338,9 +340,9 @@ class TransFusionHead(nn.Module):
                 )
             else:
                 new_res[key] = ret_dicts[0][key]
-        return [new_res]
+        return [new_res], attention_weights
 
-    def forward(self, feats, metas):
+    def forward(self, feats, metas, return_attention=False):
         """Forward pass.
         Args:
             feats (list[torch.Tensor]): Multi-level features, e.g.,
@@ -350,8 +352,10 @@ class TransFusionHead(nn.Module):
         """
         if isinstance(feats, torch.Tensor):
             feats = [feats]
-        res = multi_apply(self.forward_single, feats, [None], [metas])
+        res, attention_weights = multi_apply(self.forward_single, feats, [None], [metas])
         assert len(res) == 1, "only support one level features."
+        if return_attention:
+            return res, attention_weights
         return res
 
     def get_targets(self, gt_bboxes_3d, gt_labels_3d, preds_dict):

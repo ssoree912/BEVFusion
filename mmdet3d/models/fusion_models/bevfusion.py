@@ -245,6 +245,7 @@ class BEVFusion(Base3DFusionModel):
         gt_masks_bev=None,
         gt_bboxes_3d=None,
         gt_labels_3d=None,
+        return_attention=False,
         **kwargs,
     ):
         if isinstance(img, list):
@@ -267,6 +268,7 @@ class BEVFusion(Base3DFusionModel):
                 gt_masks_bev,
                 gt_bboxes_3d,
                 gt_labels_3d,
+                return_attention,
                 **kwargs,
             )
             return outputs
@@ -290,6 +292,7 @@ class BEVFusion(Base3DFusionModel):
         gt_masks_bev=None,
         gt_bboxes_3d=None,
         gt_labels_3d=None,
+        return_attention=False,
         **kwargs,
     ):
         features = []
@@ -364,7 +367,11 @@ class BEVFusion(Base3DFusionModel):
             outputs = [{} for _ in range(batch_size)]
             for type, head in self.heads.items():
                 if type == "object":
-                    pred_dict = head(x, metas)
+                    if return_attention:
+                        pred_dict, attention_weights = head(x, metas, return_attention=True)
+                        return pred_dict, attention_weights
+                    
+                    pred_dict = head(x, metas, return_attention=False)
                     bboxes = head.get_bboxes(pred_dict, metas)
                     for k, (boxes, scores, labels) in enumerate(bboxes):
                         outputs[k].update(

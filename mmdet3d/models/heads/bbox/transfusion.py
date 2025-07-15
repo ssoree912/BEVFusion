@@ -456,6 +456,12 @@ class TransFusionHead(nn.Module):
             ]
 
             if self.train_cfg.assigner.type == "HungarianAssigner3D":
+                if torch.isnan(bboxes_tensor_layer).any():
+                    print(f"[DEBUG] NaN in bboxes_tensor_layer at layer {idx_layer}")
+                if torch.isnan(score_layer).any():
+                    print(f"[DEBUG] NaN in score_layer at layer {idx_layer}")
+                if torch.isnan(gt_bboxes_tensor).any():
+                    print(f"[DEBUG] NaN in gt_bboxes_tensor at layer {idx_layer}")
                 assign_result = self.bbox_assigner.assign(
                     bboxes_tensor_layer,
                     gt_bboxes_tensor,

@@ -14,8 +14,8 @@ from mmdet3d.runner import CustomEpochBasedRunner
 from mmdet3d.utils import get_root_logger
 from mmdet.core import DistEvalHook
 from mmdet.datasets import build_dataloader, build_dataset, replace_ImageToTensor
-
-
+from mmcv.parallel import MMDataParallel
+from mmdet.core import EvalHook
 def train_model(
     model,
     dataset,
@@ -34,7 +34,7 @@ def train_model(
             ds,
             cfg.data.samples_per_gpu,
             cfg.data.workers_per_gpu,
-            None,
+            num_gpus=1,  
             dist=distributed,
             seed=cfg.seed,
         )
@@ -45,13 +45,14 @@ def train_model(
     find_unused_parameters = cfg.get("find_unused_parameters", False)
     # Sets the `find_unused_parameters` parameter in
     # torch.nn.parallel.DistributedDataParallel
-    model = MMDistributedDataParallel(
-        model.cuda(),
-        device_ids=[torch.cuda.current_device()],
-        broadcast_buffers=False,
-        find_unused_parameters=find_unused_parameters,
-    )
-
+    # model = MMDistributedDataParallel(
+    #     model.cuda(),
+    #     device_ids=[torch.cuda.current_device()],
+    #     broadcast_buffers=False,
+    #     find_unused_parameters=find_unused_parameters,
+    # )
+    # Single GPU friendly
+    model = MMDataParallel(model.cuda(), device_ids=[0])
     # build runner
     optimizer = build_optimizer(model, cfg.optimizer)
 
@@ -116,7 +117,7 @@ def train_model(
         )
         eval_cfg = cfg.get("evaluation", {})
         eval_cfg["by_epoch"] = cfg.runner["type"] != "IterBasedRunner"
-        eval_hook = DistEvalHook
+        eval_hook = EvalHook
         runner.register_hook(eval_hook(val_dataloader, **eval_cfg))
 
     if cfg.resume_from:

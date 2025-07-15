@@ -1,0 +1,12 @@
+_base_: ./default.yaml
+
+input_modality:
+  use_lidar: true
+  use_camera: false
+  use_radar: false
+  use_map: false
+  use_external: false
+
+model:
+  encoders:
+    camera: null

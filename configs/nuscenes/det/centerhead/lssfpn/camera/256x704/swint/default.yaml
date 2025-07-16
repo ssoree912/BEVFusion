@@ -1,4 +1,57 @@
+data:
+  val:
+    type: NuScenesDataset
+    dataset_root: ''
+    ann_file: data/nuscenes/nuscenes_infos_val.pkl
+  pipeline:
+  - type: LoadMultiViewImageFromFiles
+    to_float32: true
+  - type: ImageAug3D
+    final_dim: [256, 704]
+    resize_lim: [0.0, 0.0]   # for test (no resize)
+    bot_pct_lim: [0.0, 0.0]
+    rot_lim: [0.0, 0.0]
+    rand_flip: false
+    is_train: false
+  - type: GlobalRotScaleTrans
+    resize_lim: [1.0, 1.0]
+    rot_lim: [0.0, 0.0]
+    trans_lim: 0.0
+    is_train: false
+  - type: ImageNormalize
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  - type: DefaultFormatBundle3D
+    classes:
+      - car
+      - truck
+      - construction_vehicle
+      - bus
+      - trailer
+      - barrier
+      - motorcycle
+      - bicycle
+      - pedestrian
+      - traffic_cone
+  - 
+    type: Collect3D
+    keys: 
+      - img
+    meta_keys:
+      - camera_intrinsics
+      - camera2ego
+      - camera2lidar
+      - img_aug_matrix
+    modality:
+      use_camera: true
+      use_lidar: false
+      use_radar: false
+      use_map: false
+      use_external: false
+    test_mode: true
+  samples_per_gpu: 1
 model:
+  type : BEVFusion
   encoders:
     camera:
       backbone:
@@ -36,9 +89,11 @@ model:
           mode: bilinear
           align_corners: false      
       vtransform:
+        type: AwareBEVDepth
         in_channels: 256
         out_channels: 80
-        feature_size: ${[image_size[0] // 8, image_size[1] // 8]}
+        image_size: [704, 256]         
+        feature_size: [44, 16] 
         xbound: [-51.2, 51.2, 0.4]
         ybound: [-51.2, 51.2, 0.4]
         zbound: [-10.0, 10.0, 20.0]
@@ -58,7 +113,32 @@ model:
       in_channels: [512, 128]
       out_channels: 256
       scale_factor: 2
+  fuser:
+    type: IdentityFuser  # camera only니까 실제로 fuse 안함
+    in_channels: [256]  # vtransform output과 일치시켜야 함
+    out_channels: 256
 
+  heads:
+    object:
+      type: CenterHead  # 또는 기존 BEVFusion에서 쓰던 head
+      in_channels: 256
+      tasks:
+        - num_class: 10  # 임시. class 개수에 따라 수정
+          stride: 4
+      common_heads:
+        reg: [2, 2]
+        height: [1, 2]
+        dim: [3, 2]
+        rot: [2, 2]
+        vel: [2, 2]
+      bbox_coder:
+        type: CenterPointBBoxCoder
+        pc_range: ${point_cloud_range}
+        voxel_size: ${voxel_size} 
+        post_center_range: [0, 0, 0, 0, 0, 0]
+        max_num: 500
+        score_threshold: 0.1
+        out_size_factor: 4
 optimizer:
   paramwise_cfg:
     custom_keys:
@@ -80,6 +160,3 @@ momentum_config:
   policy: cyclic
   cyclic_times: 1
   step_ratio_up: 0.4
-
-data:
-  samples_per_gpu: 1

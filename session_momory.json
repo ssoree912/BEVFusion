@@ -1,0 +1,36 @@
+{
+    "Project Goal": "Learn cross-modal representations by aligning attention between RGB (camera) and LiDAR modalities using Knowledge Distillation (KD).",
+    "Key Steps & KD Strategy": {
+        "1. Pretrain/Use Teacher Models": [
+            "Utilize a pretrained BEVFusion model to derive two teacher models:",
+            "RGB Teacher (RGBT): A camera-only model.",
+            "LiDAR Teacher (LiDART): A LiDAR-only model.",
+            "Current Status: The user is working on extracting attention from the RGBT. The script `tools/extract_camera_attention.py` is implemented for this purpose, using the configuration `configs/nuscenes/det/centerhead/lssfpn/camera/256x704/swint/default.yaml`."
+        ],
+        "2. Extract Self-Attention Maps": [
+            "From Teacher Models:",
+            "A_RGBT: Attention from the RGB Teacher.",
+            "A_LiDART: Attention from the LiDAR Teacher.",
+            "From Student Models (the model being trained):",
+            "A_RGBS: Attention from the student's RGB path.",
+            "A_LiDARS: Attention from the student's LiDAR path."
+        ],
+        "3. Create Fused Teacher Attention": [
+            "A_fusedT = A_RGBT + A_LiDART",
+            "This combined attention map will serve as a comprehensive 'ground truth' to guide the student models."
+        ],
+        "4. Knowledge Distillation (KD) Plan": {
+            "Cross-Modal KD": [
+                "KD1: A_LiDARS ← A_RGBT (LiDAR student learns from RGB teacher).",
+                "KD2: A_RGBS ← A_LiDART (RGB student learns from LiDAR teacher)."
+            ],
+            "Mutual KD": [
+                "KD3: A_RGBS ↔ A_LiDARS"
+            ],
+            "Fused Teacher KD": [
+                "KD4: A_LiDARS ← A_fusedT",
+                "KD5: A_RGBS ← A_fusedT"
+            ]
+        }
+    }
+}

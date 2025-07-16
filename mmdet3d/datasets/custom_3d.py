@@ -14,6 +14,7 @@ from .utils import extract_result_dict
 
 @DATASETS.register_module()
 class Custom3DDataset(Dataset):
+    CLASSES = ()  # <== 이 줄을 추가하세요
     """Customized 3D dataset.
 
     This is the base dataset of SUNRGB-D, ScanNet, nuScenes, and KITTI
@@ -90,36 +91,108 @@ class Custom3DDataset(Dataset):
         Returns:
             list[dict]: List of annotations.
         """
-        return mmcv.load(ann_file)
+        # return mmcv.load(ann_file)
+        data = mmcv.load(ann_file)
+        if isinstance(data, dict) and 'infos' in data:
+            return data['infos']
+        return data
+
+    @staticmethod
+    def RT_to_matrix(rotation, translation):
+        """Convert rotation (quaternion or matrix) and translation to 4x4 matrix."""
+        if isinstance(rotation, list):
+            rotation = np.array(rotation)
+        if rotation.shape == (4,):  # quaternion
+            from pyquaternion import Quaternion
+            R = Quaternion(rotation).rotation_matrix
+        else:
+            R = rotation
+        T = np.array(translation).reshape(3, 1)
+
+        RT = np.eye(4)
+        RT[:3, :3] = R
+        RT[:3, 3:] = T
+        return RT
 
     def get_data_info(self, index):
-        """Get data info according to the given index.
 
-        Args:
-            index (int): Index of the sample data to get.
-
-        Returns:
-            dict: Data information that will be passed to the data \
-                preprocessing pipelines. It includes the following keys:
-
-                - sample_idx (str): Sample index.
-                - lidar_path (str): Filename of point clouds.
-                - file_name (str): Filename of point clouds.
-                - ann_info (dict): Annotation info.
-        """
         info = self.data_infos[index]
-        sample_idx = info["point_cloud"]["lidar_idx"]
-        lidar_path = osp.join(self.dataset_root, info["pts_path"])
+        sample_idx = info["token"]
+
+        # Conditionally set lidar_path and lidar2ego based on modality
+        if self.modality and not self.modality.get('use_lidar', True):
+            lidar_path = None
+            lidar2ego_matrix = None # Set to None if not used
+        else:
+            lidar_path = osp.join(self.dataset_root, info["lidar_path"])
+            lidar2ego_matrix = np.eye(4, dtype=np.float32) # Default if used
 
         input_dict = dict(
-            lidar_path=lidar_path, sample_idx=sample_idx, file_name=lidar_path
+            sample_idx=sample_idx,
+            lidar_path=lidar_path,
+            file_name=lidar_path, # file_name is often lidar_path, so keep it consistent
         )
 
+        # camera 관련 정보 수집
+        cams = info['cams']
+        images = []
+        camera_intrinsics = []
+        camera2ego = []
+        camera2lidar = []
+        lidar2camera = []
+        lidar2image = []
+        img_aug_matrix = []
+        lidar_aug_matrix = []
+
+        for cam_name in sorted(cams.keys()):
+            cam = cams[cam_name]
+
+            # 이미지 경로
+            images.append(osp.join(self.dataset_root, cam['data_path']))
+
+            # intrinsic matrix
+            intrinsic = np.array(cam['cam_intrinsic'])
+            camera_intrinsics.append(intrinsic)
+
+            # sensor2ego
+            sensor2ego = self.RT_to_matrix(cam['sensor2ego_rotation'], cam['sensor2ego_translation'])
+            camera2ego.append(sensor2ego)
+
+            # sensor2lidar
+            sensor2lidar = self.RT_to_matrix(cam['sensor2lidar_rotation'], cam['sensor2lidar_translation'])
+            camera2lidar.append(sensor2lidar)
+
+            # lidar2camera = inverse(sensor2lidar)
+            lidar2cam = np.linalg.inv(sensor2lidar)
+            lidar2camera.append(lidar2cam)
+
+            # lidar2image = intrinsic @ lidar2camera[:3, :]
+            lidar2img = intrinsic @ lidar2cam[:3, :]
+            lidar2image.append(lidar2img)
+
+        input_dict.update({
+            "img" : images,
+            # "img_filename": images,
+            "camera_intrinsics": np.array(camera_intrinsics),
+            "camera2ego": np.array(camera2ego),
+            "camera2lidar": np.array(camera2lidar),
+            "lidar2camera": np.array(lidar2camera),
+            "lidar2image": np.array(lidar2image),
+            "lidar2ego": lidar2ego_matrix,  # lidar 중심 좌표계
+            "img_aug_matrix": np.array(img_aug_matrix),
+            "lidar_aug_matrix": np.array(lidar_aug_matrix),
+            "metas": info
+        })
+        print("images:", images)
+        print("type(images):", type(images))
+        print("len(images):", len(images))
+        print("image[0]:", images[0])
         if not self.test_mode:
             annos = self.get_ann_info(index)
             input_dict["ann_info"] = annos
             if self.filter_empty_gt and ~(annos["gt_labels_3d"] != -1).any():
                 return None
+        print("[DEBUG] get_data_info keys:", input_dict.keys())
         return input_dict
 
     def pre_pipeline(self, results):
@@ -138,7 +211,7 @@ class Custom3DDataset(Dataset):
                 - box_type_3d (str): 3D box type.
                 - box_mode_3d (str): 3D box mode.
         """
-        results["img_fields"] = []
+        results["img_fields"] = ["img"]
         results["bbox3d_fields"] = []
         results["pts_mask_fields"] = []
         results["pts_seg_fields"] = []
@@ -178,9 +251,19 @@ class Custom3DDataset(Dataset):
             dict: Testing data dict of the corresponding index.
         """
         input_dict = self.get_data_info(index)
-        self.pre_pipeline(input_dict)
-        example = self.pipeline(input_dict)
-        return example
+        # print("==== input_dict ====")
+        # for k, v in input_dict.items():
+        #     print(f"{k}: {type(v)} {getattr(v, 'shape', '')}")
+        #     print(f"[DEBUG] input_dict keys: {input_dict.keys()}")
+        try:
+            example = self.pipeline(input_dict)
+            return example
+        except Exception as e:
+            print("=== Pipeline Error ===")
+            import traceback
+            traceback.print_exc()
+            print("Input dict keys:", input_dict.keys())
+            raise e 
 
     @classmethod
     def get_classes(cls, classes=None):

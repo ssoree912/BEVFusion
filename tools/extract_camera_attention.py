@@ -19,7 +19,23 @@ from mmdet.datasets import PIPELINES
 from pyquaternion import Quaternion
 import mmcv, numpy as np, torch
 from pyquaternion import Quaternion
+# from mmcv.utils import Registry
 from mmcv.utils import Registry
+
+# Logging setup
+import logging
+# Setup logging to file and console
+log_dir = Path('logs')
+log_dir.mkdir(exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_dir/'extract_camera_attention.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 # from .transforms_3d_extra import StackMultiViewImage 
 
 
@@ -141,13 +157,13 @@ class FixCamLidarMeta:
 # --------------------------------------------------------------------------- #
 parser = argparse.ArgumentParser()
 parser.add_argument("--cfg",
-    default="configs/nuscenes/det/transfusion/secfpn/lidar/lidar_only.yaml")
+    default="configs/nuscenes/det/centerhead/lssfpn/camera/256x704/swint/default.yaml")
 parser.add_argument("--info",
     default="full_nuscenes/full_nuscenes_infos_val_with_proj.pkl")
 parser.add_argument("--weight",
     default="pretrained/camera-only-det.pth")
 parser.add_argument("--out_dir",
-    default="outputs/attention/camera")
+    default="results/attention/camera")
 parser.add_argument("--debug", action="store_true")
 args = parser.parse_args()
 
@@ -223,6 +239,16 @@ loader = build_dataloader(dataset,
                           dist=False,
                           shuffle=False)
 
+# Progress tracking setup
+num_batches = len(loader)
+# Peek first batch to get number of camera views
+first_batch = next(iter(loader))
+N_cam = first_batch['img'].shape[1]
+total_cams = num_batches * N_cam
+counter = 0
+# Reset loader iterator
+loader = build_dataloader(dataset, samples_per_gpu=1, workers_per_gpu=0, dist=False, shuffle=False)
+
 # --------------------------------------------------------------------------- #
 # 5. Model & ShiftWindowMSA attention hook
 # --------------------------------------------------------------------------- #
@@ -267,18 +293,18 @@ level_names = [
 # 숫자 순서대로 정렬
 level_names.sort(key=lambda x: int(x.split('_')[-1]))
 
-print("DepthNet에서 사용 중인 depth_conv 레벨:", level_names)
+logger.info("DepthNet에서 사용 중인 depth_conv 레벨: %s", level_names)
 # → 예) ['depth_conv_1', 'depth_conv_2', 'depth_conv_3']
 
 # 2) 각 레벨별 블록 수 확인
 for lvl in level_names:
     module = getattr(depthnet, lvl)
     num_blocks = len(module)
-    print(f"  • {lvl}  has  {num_blocks}  blocks")
+    logger.info("  • %s  has  %d  blocks", lvl, num_blocks)
     
 # 3) (옵션) 마지막 레벨(depth_conv_3)의 출력 채널 수 = depth bin 수
 conv3 = depthnet.depth_conv_3[0]  # 첫 번째 Conv2d 레이어
-print("Depth bin 개수:", conv3.out_channels)
+logger.info("Depth bin 개수: %d", conv3.out_channels)
 
 
 vtrans = model.encoders.camera['vtransform']
@@ -352,26 +378,35 @@ def eye44(B, N):
     return torch.eye(4, dtype=torch.float32, device='cuda').expand(B, N, 4, 4).clone()
 
 # ───── DataLoader loop ─────────────────────────────────────
+
 for idx, batch in enumerate(loader):
-    img = batch['img'].cuda(non_blocking=True)  # (B, N, 3, H, W)
+    img = batch['img'].cuda(non_blocking=True)  # (B, N_cam, 3, H, W)
     B, N, C, H, W = img.shape
 
     for cam in range(N):
         attn_buf.clear()
-        single = img[:, cam:cam+1]  # keep batch dim, shape (B,1,3,H,W)
-        single = single.view(B, 3, H, W)
+        # single‐view 이미지
+        single = img[:, cam]        # shape (B,3,H,W)
+
+        # backbone 통과만 시켜서 hook으로 attn 수집
         with torch.no_grad():
             _ = model.encoders.camera.backbone(single)
 
+        counter += 1
+        remaining = total_cams - counter
+        # 한 줄 덮어쓰기로 진행 상황 출력
+        logger.info(f"Progress: {counter}/{total_cams} processed, {remaining} remaining")
+
         if not attn_buf:
-            print(f"⚠️ batch {idx} cam{cam}: attention이 수집되지 않았습니다")
             continue
 
+        # attention 저장
         for layer, attn in attn_buf.items():
             fn = save_dir / f"{idx:04d}_cam{cam}_{layer}.pt"
             torch.save(attn.half(), fn, _use_new_zipfile_serialization=False)
-            print(f"   └─ saved {fn.name}")
 
+    # 배치가 끝나면 버퍼 초기화
     attn_buf.clear()
 
-print("✓ all done →", save_dir)
+# 마지막 줄 깨끗하게
+logger.info("✓ all done → %s", save_dir)

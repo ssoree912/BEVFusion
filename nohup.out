@@ -1,0 +1,4 @@
+usage: extract_camera_attention.py [-h] [--cfg CFG] [--info INFO]
+                                   [--weight WEIGHT] [--out_dir OUT_DIR]
+                                   [--debug]
+extract_camera_attention.py: error: unrecognized arguments: logs/extract_camera_attention.log

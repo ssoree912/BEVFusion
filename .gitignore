@@ -154,3 +154,4 @@ __pycache__/
 .idea/
 nuscenes/*.pkl
 nuscenes/*.pkl
+full_nuscenes/

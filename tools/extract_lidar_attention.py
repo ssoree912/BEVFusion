@@ -145,9 +145,9 @@ parser.add_argument("--cfg",
 parser.add_argument("--info",
     default="full_nuscenes/full_nuscenes_infos_val_with_proj.pkl")
 parser.add_argument("--weight",
-    default="pretrained/lidar-only-det.pth")
+    default="pretrained/camera-only-det.pth")
 parser.add_argument("--out_dir",
-    default="outputs/attention/lidar")
+    default="outputs/attention/camera")
 parser.add_argument("--debug", action="store_true")
 args = parser.parse_args()
 
@@ -158,18 +158,29 @@ cfg.model.pretrained = None
 
 
 
-lidar_pipeline = [
-    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=5, use_dim=[0,1,2]),
-    dict(type='LoadMultiViewImageFromFiles', to_float32=True),  # 필요 없으면 지워도 됩니다
-    dict(type='DefaultFormatBundle3D'),
-    dict(type='Collect3D', keys=['points'], meta_keys=['sample_idx','timestamp']),
+camera_pipeline = [
+    dict(type='LoadMultiViewImageFromFiles', to_float32=True),
+    dict(type='FixCamLidarMeta'),  
+    dict(type='ImageToNumpy'), # 메타 필드 전개
+    dict(type='StackMVNormalize'),         # List → Tensor & 정규화
+    dict(type='Collect3D',                 # 텐서는 stack=True, 나머지는 cpu_only
+         keys=['img'],
+        meta_keys=[
+         # 우리가 forward 에서 필요로 하는 것 전부!
+         'camera_intrinsics', 'camera2ego', 'camera2lidar',
+         'lidar2camera', 'lidar2image', 'img_aug_matrix',
+         'lidar2ego', 'timestamp'
+     ]),
+    dict(type='PackCameraMeta') ,
 ]
 
 simple_dataset = dict(
     type       = "Custom3DDataset",
+    dataset_root = "",
     ann_file   = args.info,
-    pipeline   = lidar_pipeline,
-    modality=dict(use_lidar=True, use_camera=False, use_radar=False),
+    pipeline   = camera_pipeline,
+    modality   = dict(use_camera=True, use_lidar=False,
+                      use_radar=False, use_map=False, use_external=False),
     test_mode  = True,
 )
 cfg.data.val  = copy.deepcopy(simple_dataset)

@@ -1,13 +1,28 @@
-voxel_size: [0.075, 0.075, 0.2]
+# ------------------ 기본 변수 ------------------
 point_cloud_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+voxel_size: [0.075, 0.075, 0.2]
+class_names: [
+    'car', 'truck', 'trailer', 'bus', 'construction_vehicle', 'bicycle',
+    'motorcycle', 'pedestrian', 'traffic_cone', 'barrier'
+]
+dataset_type: 'NuScenesDataset'
+data_root: 'data/nuscenes/' # ★ 데이터 경로가 다르면 이 부분을 수정하세요.
+input_modality:
+  use_lidar: true
+  use_camera: false
+  use_radar: false
+  use_map: false
+  use_external: false
 
+# ------------------ 모델 정의 (수정) ------------------
 model:
+  type: 'BEVFusion'
   encoders:
     lidar:
       voxelize:
         max_num_points: 10
-        point_cloud_range: ${point_cloud_range}
-        voxel_size: ${voxel_size}
+        point_cloud_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+        voxel_size: [0.075, 0.075, 0.2]
         max_voxels: [120000, 160000]
       backbone:
         type: SparseEncoder
@@ -29,9 +44,176 @@ model:
           - [0, 0, [1, 1, 0]]
           - [0, 0]
         block_type: basicblock
+
+  # ★★★★★ 누락되었던 fuser, decoder, heads 부분 추가 및 완성 ★★★★★
+  fuser:
+    type: 'ConvFuser'
+    in_channels: [128] # LiDAR 인코더의 최종 출력 채널과 동일
+    out_channels: 128
+
+  decoder:
+    backbone: 
+      type: 'SECOND'
+      in_channels: 128
+      layer_nums: [3, 3]
+      layer_strides: [2, 2]
+      out_channels: [128, 256]
+    neck:
+      type: 'GeneralizedLSSFPN'
+      in_channels: [128, 256] # backbone의 out_channels와 동일
+      out_channels: 256
+      num_outs: 1
+      start_level: 0
+      norm_cfg:
+        type: 'BN2d'
+
   heads:
     object:
+      type: 'TransFusionHead'
+      num_proposals: 200
+      in_channels: 256 
+      hidden_channel: 128
+      num_classes: 10
+      num_decoder_layers: 1
+      num_heads: 8
+      nms_kernel_size: 3
+      ffn_channel: 256
+      dropout: 0.1
+      bn_momentum: 0.1
+      activation: 'relu'
+      common_heads:
+        reg: [2, 2]
+        height: [1, 2]
+        dim: [3, 2]
+        rot: [2, 2]
+        vel: [2, 2]
       train_cfg:
         grid_size: [1440, 1440, 41]
+        out_size_factor: 8
+        voxel_size: [0.075, 0.075, 0.2]
+        pc_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+        assigner:
+          type: 'HungarianAssigner3D'
+          cls_cost:
+            type: 'FocalLossCost'
+            weight: 2.0
+          reg_cost:
+            type: 'BBox3DL1Cost'
+            weight: 0.25
+        pc_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
       test_cfg:
         grid_size: [1440, 1440, 41]
+        out_size_factor: 8
+        voxel_size: [0.075, 0.075, 0.2]
+        pc_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+      bbox_coder:
+        type: 'TransFusionBBoxCoder'
+        pc_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+        post_center_range: [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+        score_threshold: 0.0
+        out_size_factor: 8
+        voxel_size: [0.075, 0.075, 0.2]
+      loss_cls:
+        type: 'FocalLoss'
+        use_sigmoid: true
+        gamma: 2.0
+        alpha: 0.25
+        loss_weight: 1.0
+      loss_bbox:
+        type: 'L1Loss'
+        loss_weight: 0.25
+      loss_heatmap:
+        type: 'GaussianFocalLoss'
+        loss_weight: 1.0
+
+# ------------------ 데이터 설정 (누락되었던 부분 추가) ------------------
+data:
+  samples_per_gpu: 1
+  workers_per_gpu: 4
+  train:
+    type: ${dataset_type}
+    data_root: ${data_root}
+    ann_file: ${data_root} + 'nuscenes_infos_train.pkl'
+    classes: ${class_names}
+    modality: ${input_modality}
+    test_mode: false
+    box_type_3d: 'LiDAR'
+    # 학습 시 사용하는 데이터 처리 파이프라인
+    pipeline:
+      - type: LoadPointsFromFile
+        coord_type: 'LIDAR'
+        load_dim: 5
+        use_dim: 5
+      - type: LoadPointsFromMultiSweeps
+        sweeps_num: 9
+        use_dim: [0, 1, 2, 3, 4]
+        pad_empty_sweeps: true
+        remove_close: true
+      - type: LoadAnnotations3D
+        with_bbox_3d: true
+        with_label_3d: true
+      - type: PointsRangeFilter
+        point_cloud_range: ${point_cloud_range}
+      - type: ObjectRangeFilter
+        point_cloud_range: ${point_cloud_range}
+      - type: ObjectNameFilter
+        classes: ${class_names}
+      - type: PointShuffle
+      - type: DefaultFormatBundle3D
+        class_names: ${class_names}
+        with_label: true
+      - type: Collect3D
+        keys: ['points', 'gt_bboxes_3d', 'gt_labels_3d']
+
+  val:
+    type: ${dataset_type}
+    data_root: ${data_root}
+    ann_file: ${data_root} + 'nuscenes_infos_val.pkl'
+    classes: ${class_names}
+    modality: ${input_modality}
+    test_mode: true
+    box_type_3d: 'LiDAR'
+    # 검증 시 사용하는 데이터 처리 파이프라인
+    pipeline:
+      - type: LoadPointsFromFile
+        coord_type: 'LIDAR'
+        load_dim: 5
+        use_dim: 5
+      - type: LoadPointsFromMultiSweeps
+        sweeps_num: 9
+        use_dim: [0, 1, 2, 3, 4]
+        pad_empty_sweeps: true
+        remove_close: true
+      - type: PointsRangeFilter
+        point_cloud_range: ${point_cloud_range}
+      - type: DefaultFormatBundle3D
+        class_names: ${class_names}
+        with_label: false
+      - type: Collect3D
+        keys: ['points']
+
+  test:
+    type: ${dataset_type}
+    data_root: ${data_root}
+    ann_file: ${data_root} + 'nuscenes_infos_val.pkl'
+    classes: ${class_names}
+    modality: ${input_modality}
+    test_mode: true
+    box_type_3d: 'LiDAR'
+    pipeline:
+      - type: LoadPointsFromFile
+        coord_type: 'LIDAR'
+        load_dim: 5
+        use_dim: 5
+      - type: LoadPointsFromMultiSweeps
+        sweeps_num: 9
+        use_dim: [0, 1, 2, 3, 4]
+        pad_empty_sweeps: true
+        remove_close: true
+      - type: PointsRangeFilter
+        point_cloud_range: ${point_cloud_range}
+      - type: DefaultFormatBundle3D
+        class_names: ${class_names}
+        with_label: false
+      - type: Collect3D
+        keys: ['points']

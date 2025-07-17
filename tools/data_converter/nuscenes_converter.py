@@ -409,6 +409,38 @@ def export_2d_annotation(root_path, info_path, version, mono3d=True):
     for info in mmcv.track_iter_progress(nusc_infos):
         for cam in camera_types:
             cam_info = info['cams'][cam]
+            # === lidar2image_matrix ===
+            lidar2cam_rot = np.array(cam_info['sensor2lidar_rotation']).T
+            lidar2cam_trans = -lidar2cam_rot @ np.array(cam_info['sensor2lidar_translation'])
+            lidar2cam_rt = np.eye(4)
+            lidar2cam_rt[:3, :3] = lidar2cam_rot
+            lidar2cam_rt[:3, 3] = lidar2cam_trans
+
+            intrinsic = np.array(cam_info['cam_intrinsic'])
+            proj = np.eye(4)
+            proj[:3, :3] = intrinsic
+            lidar2image = proj @ lidar2cam_rt
+
+            # === camera2lidar and lidar2camera ===
+            sensor2lidar_rot = np.array(cam_info['sensor2lidar_rotation'])
+            sensor2lidar_trans = np.array(cam_info['sensor2lidar_translation'])
+
+            lidar2camera = np.eye(4)
+            lidar2camera[:3, :3] = lidar2cam_rot
+            lidar2camera[:3, 3] = lidar2cam_trans
+
+            camera2lidar = np.eye(4)
+            camera2lidar[:3, :3] = sensor2lidar_rot
+            camera2lidar[:3, 3] = sensor2lidar_trans
+
+            # === img_aug_matrix (없으면 identity) ===
+            img_aug_matrix = np.eye(4)
+
+            # === update cam_info ===
+            cam_info['lidar2image_matrix'] = lidar2image
+            cam_info['lidar2camera'] = lidar2camera
+            cam_info['camera2lidar'] = camera2lidar
+            cam_info['img_aug_matrix'] = img_aug_matrix
             coco_infos = get_2d_boxes(
                 nusc,
                 cam_info['sample_data_token'],
@@ -662,4 +694,7 @@ def generate_record(ann_rec: dict, x1: float, y1: float, x2: float, y2: float,
 
 
 if __name__ == '__main__':
-    create_nuscenes_infos('data/nuscenes/', 'radar_nuscenes_5sweeps')
+    create_nuscenes_infos('data/nuscenes/', 'full_nuscenes')
+     # 🔽 여기 한 줄 추가
+    export_2d_annotation('data/nuscenes/', 'data/nuscenes/full_nuscenes_infos_train.pkl', 'v1.0-trainval')
+    export_2d_annotation('data/nuscenes/', 'data/nuscenes/full_nuscenes_infos_val.pkl', 'v1.0-trainval')

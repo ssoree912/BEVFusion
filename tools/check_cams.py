@@ -1,18 +1,24 @@
 import pickle
-
+from mmdet3d.datasets import build_dataset
+import mmcv, numpy as np
+from mmcv import Config
 # 🔄 NuScenes info pkl 파일 경로
-info_path = './data/nuscenes/nuscenes_infos_val.pkl'  # ← 경로를 실제 사용 중인 것으로 변경
+# info_path = './data/nuscenes/nuscenes_infos_val.pkl'  # ← 경로를 실제 사용 중인 것으로 변경
+info = mmcv.load('./full_nuscenes/full_nuscenes_infos_val_with_proj.pkl')
+# cfg = Config.fromfile('configs/nuscenes/det/centerhead/lssfpn/camera/256x704/swint/default.yaml')
+# cfg.data.val.ann_file = './full_nuscenes/full_nuscenes_infos_val.pkl'  # ← 경로를 실제 사용 중인 것으로 변경
+# ds = build_dataset(cfg.data.val)
+# _ = ds[0]
 
-# ✅ 파일 로드
-with open(info_path, 'rb') as f:
-    infos = pickle.load(f)
+print(f"# Samples: {len(info['infos'])}")
+first = info['infos'][0]
+print("✅ First sample keys:", first.keys())
 
-# ✅ 첫 번째 샘플 확인
-first_info = infos['infos'][0]  # 또는 infos[0]인 경우도 있음
-cams = first_info['cams']
+# required_keys = [
+#     'lidar_path', 'token', 'sweeps', 'cams', 'lidar2ego_translation',
+#     'lidar2ego_rotation', 'ego2global_translation', 'ego2global_rotation', 'timestamp'
+# ]
+# missing = [k for k in required_keys if k not in first]
+# print("✅ Missing required keys:", missing if missing else "None")
 
-# ✅ cams 구조 출력
-for cam_name, cam_info in cams.items():
-    print(f"[{cam_name}]")
-    for key, value in cam_info.items():
-        print(f"  {key}: {type(value)}")
+print("\n✅ First CAM_FRONT keys:", first['cams']['CAM_FRONT'].keys())

@@ -243,42 +243,40 @@ class NuScenesDataset(Custom3DDataset):
             data["camera2ego"] = []
             data["camera_intrinsics"] = []
             data["camera2lidar"] = []
+            data["img_aug_matrix"] = []
 
-            for _, camera_info in info["cams"].items():
-                data["image_paths"].append(camera_info["data_path"])
+            for _, cam in info["cams"].items():
+                # 1. 이미지 경로
+                data["image_paths"].append(cam["data_path"])
 
-                # lidar to camera transform
-                lidar2camera_r = np.linalg.inv(camera_info["sensor2lidar_rotation"])
-                lidar2camera_t = (
-                    camera_info["sensor2lidar_translation"] @ lidar2camera_r.T
-                )
-                lidar2camera_rt = np.eye(4).astype(np.float32)
-                lidar2camera_rt[:3, :3] = lidar2camera_r.T
-                lidar2camera_rt[3, :3] = -lidar2camera_t
-                data["lidar2camera"].append(lidar2camera_rt.T)
+                # 2. intrinsics
+                K = np.eye(4, dtype=np.float32)
+                K[:3, :3] = np.array(cam["cam_intrinsic"])
+                data["camera_intrinsics"].append(K)
 
-                # camera intrinsics
-                camera_intrinsics = np.eye(4).astype(np.float32)
-                camera_intrinsics[:3, :3] = camera_info["cam_intrinsic"]
-                data["camera_intrinsics"].append(camera_intrinsics)
+                # 3. camera2ego
+                cam2ego = np.eye(4, dtype=np.float32)
+                cam2ego[:3, :3] = Quaternion(cam["sensor2ego_rotation"]).rotation_matrix
+                cam2ego[:3, 3] = cam["sensor2ego_translation"]
+                data["camera2ego"].append(cam2ego)
 
-                # lidar to image transform
-                lidar2image = camera_intrinsics @ lidar2camera_rt.T
-                data["lidar2image"].append(lidar2image)
+                # 4. camera2lidar
+                cam2lidar = np.eye(4, dtype=np.float32)
+                cam2lidar[:3, :3] = np.array(cam["sensor2lidar_rotation"])
+                cam2lidar[:3, 3] = np.array(cam["sensor2lidar_translation"])
+                data["camera2lidar"].append(cam2lidar)
 
-                # camera to ego transform
-                camera2ego = np.eye(4).astype(np.float32)
-                camera2ego[:3, :3] = Quaternion(
-                    camera_info["sensor2ego_rotation"]
-                ).rotation_matrix
-                camera2ego[:3, 3] = camera_info["sensor2ego_translation"]
-                data["camera2ego"].append(camera2ego)
+                # 5. lidar2camera (for completeness, optional)
+                lidar2cam = np.eye(4, dtype=np.float32)
+                lidar2cam[:3, :3] = np.linalg.inv(cam["sensor2lidar_rotation"])
+                lidar2cam[:3, 3] = -np.array(cam["sensor2lidar_translation"]) @ np.linalg.inv(cam["sensor2lidar_rotation"])
+                data["lidar2camera"].append(lidar2cam)
 
-                # camera to lidar transform
-                camera2lidar = np.eye(4).astype(np.float32)
-                camera2lidar[:3, :3] = camera_info["sensor2lidar_rotation"]
-                camera2lidar[:3, 3] = camera_info["sensor2lidar_translation"]
-                data["camera2lidar"].append(camera2lidar)
+                # 6. lidar2image (optional, composite matrix)
+                data["lidar2image"].append(K @ lidar2cam)
+
+                # 7. img_aug_matrix – 보정이 없으면 단위행렬로 설정
+                data["img_aug_matrix"].append(np.eye(4, dtype=np.float32))
 
         annos = self.get_ann_info(index)
         data["ann_info"] = annos

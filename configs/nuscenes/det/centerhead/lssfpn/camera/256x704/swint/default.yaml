@@ -1,8 +1,8 @@
 data:
   val:
-    type: NuScenesDataset
+    type: Custom3DDataset
     dataset_root: ''
-    ann_file: data/nuscenes/nuscenes_infos_val.pkl
+    ann_file: full_nuscenes/full_nuscenes_infos_train.pkl
   pipeline:
   - type: LoadMultiViewImageFromFiles
     to_float32: true
@@ -38,10 +38,15 @@ data:
     keys: 
       - img
     meta_keys:
+      - metas   
       - camera_intrinsics
       - camera2ego
+      - lidar2ego
+      - lidar2camera
       - camera2lidar
+      - lidar2image
       - img_aug_matrix
+      - lidar_aug_matrix 
     modality:
       use_camera: true
       use_lidar: false

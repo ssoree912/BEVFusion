@@ -10,11 +10,21 @@ from mmdet.datasets import DATASETS
 from ..core.bbox import get_box_type
 from .pipelines import Compose
 from .utils import extract_result_dict
+from pyquaternion import Quaternion
 
-
+def recursively_convert_str_ndarray(obj):
+        
+        if isinstance(obj, dict):
+            return {k: recursively_convert_str_ndarray(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [recursively_convert_str_ndarray(v) for v in obj]
+        elif isinstance(obj, np.ndarray) and obj.dtype.type is np.str_:
+            return obj.tolist()  # ← 핵심 변환
+        else:
+            return obj
 @DATASETS.register_module()
 class Custom3DDataset(Dataset):
-    CLASSES = ()  # <== 이 줄을 추가하세요
+    CLASSES = ()
     """Customized 3D dataset.
 
     This is the base dataset of SUNRGB-D, ScanNet, nuScenes, and KITTI
@@ -61,7 +71,7 @@ class Custom3DDataset(Dataset):
         self.modality = modality
         self.filter_empty_gt = filter_empty_gt
         self.box_type_3d, self.box_mode_3d = get_box_type(box_type_3d)
-
+        self.camera_order = ['CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_FRONT_LEFT', 'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT']
         self.CLASSES = self.get_classes(classes)
         self.cat2id = {name: i for i, name in enumerate(self.CLASSES)}
         self.data_infos = self.load_annotations(self.ann_file)
@@ -83,117 +93,107 @@ class Custom3DDataset(Dataset):
                     transform.set_epoch(epoch)
         
     def load_annotations(self, ann_file):
-        """Load annotations from ann_file.
-
-        Args:
-            ann_file (str): Path of the annotation file.
-
-        Returns:
-            list[dict]: List of annotations.
-        """
-        # return mmcv.load(ann_file)
+        """Load annotations from ann_file."""
         data = mmcv.load(ann_file)
+
+        # ✅ 정석적으로 'infos' 필드가 있으면 그걸 가져옴
         if isinstance(data, dict) and 'infos' in data:
-            return data['infos']
-        return data
+            infos = data['infos']
 
-    @staticmethod
-    def RT_to_matrix(rotation, translation):
-        """Convert rotation (quaternion or matrix) and translation to 4x4 matrix."""
-        if isinstance(rotation, list):
-            rotation = np.array(rotation)
-        if rotation.shape == (4,):  # quaternion
-            from pyquaternion import Quaternion
-            R = Quaternion(rotation).rotation_matrix
+            # ✅ dict면 list로 바꿔줌
+            if isinstance(infos, dict):
+                return list(infos.values())
+            else:
+                return infos
+
+        # ✅ fallback: list이면 바로 반환
+        elif isinstance(data, list):
+            return data
+
+        # ✅ dict인데 'infos' 없이 바로 dict인 경우
+        elif isinstance(data, dict):
+            return list(data.values())
+
         else:
-            R = rotation
-        T = np.array(translation).reshape(3, 1)
-
-        RT = np.eye(4)
-        RT[:3, :3] = R
-        RT[:3, 3:] = T
-        return RT
-
+            raise ValueError("Unsupported annotation format.")
     def get_data_info(self, index):
-
         info = self.data_infos[index]
-        sample_idx = info["token"]
+        # print(f"[DEBUG] Keys in data_info: {list(info.keys())}")
+        lidar2ego = np.eye(4, dtype=np.float32)
+        lidar2ego[:3, :3] = Quaternion(info['lidar2ego_rotation']).rotation_matrix
+        lidar2ego[:3, 3]  = info['lidar2ego_translation']
+        
 
-        # Conditionally set lidar_path and lidar2ego based on modality
-        if self.modality and not self.modality.get('use_lidar', True):
-            lidar_path = None
-            lidar2ego_matrix = None # Set to None if not used
-        else:
-            lidar_path = osp.join(self.dataset_root, info["lidar_path"])
-            lidar2ego_matrix = np.eye(4, dtype=np.float32) # Default if used
+        # ───────────────────────────────────────────────────────── lidar / token
+        sample_idx = info['token']
+        lidar_path = info['lidar_path']
 
+        # ───────────────────────────────────────────────────────── camera loop
+        cam_order = self.camera_order          # ['CAM_FRONT', … ]
+        image_paths, lidar2image = [], []
+        camera_intrinsics, camera2ego = [], []
+        camera2lidar, lidar2camera = [], []
+        img_aug_matrix, ego2global = [], []
+
+        for cam in cam_order:
+            cam_info = info['cams'][cam]
+
+            image_paths.append(cam_info['data_path'])
+
+            lidar2image.append( np.asarray(cam_info['lidar2image_matrix'],
+                                        dtype=np.float32) )
+
+            camera_intrinsics.append( np.asarray(cam_info['cam_intrinsic'],
+                                                dtype=np.float32) )
+
+            # ─ camera ↔ ego
+            c2e = np.eye(4, dtype=np.float32)
+            c2e[:3, :3] = Quaternion(cam_info['sensor2ego_rotation']).rotation_matrix
+            c2e[:3,  3] = cam_info['sensor2ego_translation']
+            camera2ego.append(c2e)
+
+            # ─ camera ↔ lidar  (이미 pkl 에 저장해 둔 값 사용)
+            camera2lidar.append( np.asarray(cam_info['camera2lidar'],
+                                            dtype=np.float32) )
+            lidar2camera.append( np.asarray(cam_info['lidar2camera'],
+                                            dtype=np.float32) )
+
+            # ─ img_aug_matrix (없으면 I)
+            img_aug_matrix.append( np.asarray(cam_info.get('img_aug_matrix',
+                                                        np.eye(4)), dtype=np.float32) )
+
+            # ─ ego ↔ global (cam 좌표계 기준)
+            e2g = np.eye(4, dtype=np.float32)
+            e2g[:3, :3] = Quaternion(cam_info['ego2global_rotation']).rotation_matrix
+            e2g[:3,  3] = cam_info['ego2global_translation']
+            ego2global.append(e2g)
+
+        # ───────────────────────────────────────────────────────── assemble
         input_dict = dict(
-            sample_idx=sample_idx,
-            lidar_path=lidar_path,
-            file_name=lidar_path, # file_name is often lidar_path, so keep it consistent
+            sample_idx         = sample_idx,
+            lidar_path         = lidar_path,
+            image_paths        = image_paths,
+            lidar2image        = lidar2image,
+            camera_intrinsics  = camera_intrinsics,
+            camera2ego         = camera2ego,
+            camera2lidar       = camera2lidar,      # ★ 추가
+            lidar2camera       = lidar2camera,      # ★ 추가
+            img_aug_matrix     = img_aug_matrix,    # ★ 추가
+            ego2global         = ego2global,
+            lidar2ego          = lidar2ego,   
+            timestamp          = info['timestamp'],
         )
+        input_dict['cams'] = info['cams']  
 
-        # camera 관련 정보 수집
-        cams = info['cams']
-        images = []
-        camera_intrinsics = []
-        camera2ego = []
-        camera2lidar = []
-        lidar2camera = []
-        lidar2image = []
-        img_aug_matrix = []
-        lidar_aug_matrix = []
-
-        for cam_name in sorted(cams.keys()):
-            cam = cams[cam_name]
-
-            # 이미지 경로
-            images.append(osp.join(self.dataset_root, cam['data_path']))
-
-            # intrinsic matrix
-            intrinsic = np.array(cam['cam_intrinsic'])
-            camera_intrinsics.append(intrinsic)
-
-            # sensor2ego
-            sensor2ego = self.RT_to_matrix(cam['sensor2ego_rotation'], cam['sensor2ego_translation'])
-            camera2ego.append(sensor2ego)
-
-            # sensor2lidar
-            sensor2lidar = self.RT_to_matrix(cam['sensor2lidar_rotation'], cam['sensor2lidar_translation'])
-            camera2lidar.append(sensor2lidar)
-
-            # lidar2camera = inverse(sensor2lidar)
-            lidar2cam = np.linalg.inv(sensor2lidar)
-            lidar2camera.append(lidar2cam)
-
-            # lidar2image = intrinsic @ lidar2camera[:3, :]
-            lidar2img = intrinsic @ lidar2cam[:3, :]
-            lidar2image.append(lidar2img)
-
-        input_dict.update({
-            "img" : images,
-            # "img_filename": images,
-            "camera_intrinsics": np.array(camera_intrinsics),
-            "camera2ego": np.array(camera2ego),
-            "camera2lidar": np.array(camera2lidar),
-            "lidar2camera": np.array(lidar2camera),
-            "lidar2image": np.array(lidar2image),
-            "lidar2ego": lidar2ego_matrix,  # lidar 중심 좌표계
-            "img_aug_matrix": np.array(img_aug_matrix),
-            "lidar_aug_matrix": np.array(lidar_aug_matrix),
-            "metas": info
-        })
-        print("images:", images)
-        print("type(images):", type(images))
-        print("len(images):", len(images))
-        print("image[0]:", images[0])
+        # ───────────────────────────────────────────────────────── annotations
         if not self.test_mode:
             annos = self.get_ann_info(index)
-            input_dict["ann_info"] = annos
+            input_dict['ann_info'] = annos
             if self.filter_empty_gt and ~(annos["gt_labels_3d"] != -1).any():
                 return None
-        print("[DEBUG] get_data_info keys:", input_dict.keys())
+
         return input_dict
+
 
     def pre_pipeline(self, results):
         """Initialization before data preparation.
@@ -211,7 +211,7 @@ class Custom3DDataset(Dataset):
                 - box_type_3d (str): 3D box type.
                 - box_mode_3d (str): 3D box mode.
         """
-        results["img_fields"] = ["img"]
+        results["img_fields"] = []
         results["bbox3d_fields"] = []
         results["pts_mask_fields"] = []
         results["pts_seg_fields"] = []
@@ -242,6 +242,7 @@ class Custom3DDataset(Dataset):
         return example
 
     def prepare_test_data(self, index):
+        # print("[DEBUG] :", )
         """Prepare data for testing.
 
         Args:
@@ -250,20 +251,22 @@ class Custom3DDataset(Dataset):
         Returns:
             dict: Testing data dict of the corresponding index.
         """
-        input_dict = self.get_data_info(index)
-        # print("==== input_dict ====")
+        input_dict = self.get_data_info(index) 
+        # print("[DEBUG] input_dict keys:", input_dict.keys())
         # for k, v in input_dict.items():
-        #     print(f"{k}: {type(v)} {getattr(v, 'shape', '')}")
-        #     print(f"[DEBUG] input_dict keys: {input_dict.keys()}")
+        #     if isinstance(v, np.ndarray):
+        #         print(f"[DEBUG] {k}: {v.dtype}, shape={v.shape}")
+        # self.pre_pipeline(input_dict)
         try:
+            # print("[DEBUG] input_dict keys before pipeline:", list(input_dict.keys()))
             example = self.pipeline(input_dict)
-            return example
+            # print("[DEBUG] example after pipeline:", example)
+
         except Exception as e:
-            print("=== Pipeline Error ===")
-            import traceback
-            traceback.print_exc()
-            print("Input dict keys:", input_dict.keys())
-            raise e 
+            # print("[ERROR] pipeline failed with:", repr(e))
+            # print("[DEBUG] input_dict keys:", list(input_dict.keys()))
+            raise e
+        return example
 
     @classmethod
     def get_classes(cls, classes=None):

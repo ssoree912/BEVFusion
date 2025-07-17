@@ -1,0 +1,109 @@
+data:
+  val:
+    type: NuScenesDataset
+    dataset_root: data/nuscenes/
+    ann_file: data/nuscenes/nuscenes_infos_val.pkl
+    pipeline:
+      - type: LoadPointsFromFile
+        coord_type: LIDAR
+        load_dim: 5
+        use_dim: 5
+      - type: PointsRangeFilter
+        point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+      - type: DefaultFormatBundle3D
+        classes: [
+          'car', 'truck', 'construction_vehicle', 'bus', 'trailer',
+          'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone'
+        ]
+      - type: Collect3D
+        keys: [points]
+        meta_keys: [lidar2ego]
+    modality:
+      use_lidar: true
+      use_camera: false
+      # use_radar: false
+      use_map: false
+      use_external: false
+    test_mode: true
+    box_type_3d: LiDAR
+  test:
+    type: NuScenesDataset
+    data_root: data/nuscenes/
+    ann_file: data/nuscenes/nuscenes_infos_val.pkl
+    pipeline:
+      - type: LoadPointsFromFile
+        coord_type: LIDAR
+        load_dim: 5
+        use_dim: 5
+      - type: PointsRangeFilter
+        point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+      - type: DefaultFormatBundle3D
+      - type: Collect3D
+        keys: [points]
+        meta_keys: [lidar2ego]
+    modality:
+      use_lidar: true
+      use_camera: false
+      use_radar: false
+      use_map: false
+      use_external: false
+    test_mode: true
+    box_type_3d: LiDAR
+
+
+
+# ─────────── 모델 (LiDAR Only) ───────────
+model:
+  type: BEVFusion
+  encoders:
+    lidar:
+      voxelize:
+        max_num_points: 10
+        max_voxels: [120000, 160000]
+        voxel_size: [0.1, 0.1, 0.2]
+        point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+      backbone:
+        type: SparseEncoder
+        in_channels: 5
+        sparse_shape: [1440, 1440, 41]
+        base_channels: 16
+        output_channels: 128
+      vtransform:
+        type: HeightCompression
+        in_channels: 128
+        out_channels: 80
+  decoder:
+    backbone:
+      type: GeneralizedResNet
+      in_channels: 80
+      blocks: [[2, 128, 2], [2, 256, 2], [2, 512, 1]]
+    neck:
+      type: LSSFPN
+      in_indices: [-1, 0]
+      in_channels: [512, 128]
+      out_channels: 256
+      scale_factor: 2
+  fuser:
+    type: IdentityFuser      # LiDAR only
+    in_channels: [256]
+    out_channels: 256
+  heads:
+    object:
+      type: CenterHead
+      in_channels: 256
+      tasks:
+        - num_class: 10
+          stride: 4
+      common_heads:
+        reg:   [2, 2]
+        height: [1, 2]
+        dim:   [3, 2]
+        rot:   [2, 2]
+        vel:   [2, 2]
+      bbox_coder:
+        type: CenterPointBBoxCoder
+        # point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+        # voxel_size: [0.1, 0.1, 0.2]
+        out_size_factor: 4
+
+# (optimizer / lr_config 등은 기존 camera‑only yaml 과 동일하게 두어도 무방)

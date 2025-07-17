@@ -607,7 +607,11 @@ class PointsRangeFilter:
         if "radar" in data:
             radar = data["radar"]
             # radar_mask = radar.in_range_3d(self.pcd_range)
-            radar_mask = radar.in_range_bev([-55.0, -55.0, 55.0, 55.0])
+            # radar_mask = radar.in_range_bev([-55.0, -55.0, 55.0, 55.0])
+            if hasattr(radar, 'in_range_bev'):
+                radar_mask = radar.in_range_bev([-55.0, -55.0, 55.0, 55.0])
+            else:
+                radar_mask = None
             clean_radar = radar[radar_mask]
             data["radar"] = clean_radar
 

@@ -11,11 +11,11 @@ log_config:
   hooks:
     - type: TextLoggerHook
     - type: TensorboardLoggerHook
-    - type: WandbLoggerHook
-      init_kwargs:
-        project: 'hyundai_autonomous'         # 원하는 프로젝트 이름
-        name: 'exp_baseline_v1'      # 실험 이름
-        entity: 'solhee0912-kookmin-university'  # 개인 또는 팀 이름 (W&B 대시보드 URL에서 확인 가능)
+    # - type: WandbLoggerHook
+    #   init_kwargs:
+    #     project: 'hyundai_autonomous'         # 원하는 프로젝트 이름
+    #     name: 'exp_baseline_v1'      # 실험 이름
+    #     entity: 'solhee0912-kookmin-university'  # 개인 또는 팀 이름 (W&B 대시보드 URL에서 확인 가능)
 
 load_from: null
 resume_from: null

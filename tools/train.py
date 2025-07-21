@@ -50,7 +50,14 @@ def main():
     logger = get_root_logger(log_file=log_file)
 
     # log some basic info
-    logger.info(f"Config:\n{cfg.text}")
+    print("--------- Config dump ----------")
+    # print(cfg.dump())  # 혹은 그냥 print(cfg) 만 해도 됩니다.
+
+    # 문제의 원인이 되는 head 부분 확인
+    print("Model heads config:", cfg.model.heads)
+    print("Object head details:")
+    for k, v in cfg.model.heads.object.items():
+        print(f"  {k}: {v}")
 
     # set random seeds
     if cfg.seed is not None:

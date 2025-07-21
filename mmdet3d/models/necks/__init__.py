@@ -4,3 +4,4 @@ from .lss import *
 from .second import *
 from .generalized_lss import *
 from .detectron_fpn import *
+from .transformer_fpn import TransformerFPN  # add this line

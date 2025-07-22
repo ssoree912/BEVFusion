@@ -1,0 +1,64 @@
+_wandb:
+    value:
+        cli_version: 0.21.0
+        e:
+            cnvlfi4lx0ibe82v922fw09b52nfoj39:
+                args:
+                    - configs/nuscenes/det/transfusion/secfpn/camera+lidar/swint_v0p075/convfuser.yaml
+                    - --cfg-options
+                    - data.version=v1.0
+                    - data.samples_per_gpu=1
+                    - data.workers_per_gpu=0
+                codePath: tools/train.py
+                codePathLocal: tools/train.py
+                cpu_count: 8
+                cpu_count_logical: 16
+                cudaVersion: "12.4"
+                disk:
+                    /:
+                        total: "982240026624"
+                        used: "854150062080"
+                email: solhee0912@gmail.com
+                executable: /opt/conda/bin/python
+                git:
+                    remote: https://github.com/ssoree912/BEVFusion.git
+                gpu: NVIDIA GeForce RTX 3090
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 10496
+                      memoryTotal: "25769803776"
+                      name: NVIDIA GeForce RTX 3090
+                      uuid: GPU-427726a7-a469-4b03-e7ca-917ebf193409
+                host: 1853dd4d1774
+                memory:
+                    total: "66529042432"
+                os: Linux-6.11.0-29-generic-x86_64-with-glibc2.17
+                program: tools/train.py
+                python: CPython 3.8.13
+                root: /workspace/BEVFusion
+                startedAt: "2025-07-22T09:30:26.547394Z"
+                writerId: cnvlfi4lx0ibe82v922fw09b52nfoj39
+        m: []
+        python_version: 3.8.13
+        t:
+            "1":
+                - 1
+                - 5
+                - 37
+                - 38
+                - 41
+                - 53
+            "2":
+                - 1
+                - 5
+                - 37
+                - 38
+                - 41
+                - 53
+            "3":
+                - 13
+            "4": 3.8.13
+            "5": 0.21.0
+            "12": 0.21.0
+            "13": linux-x86_64

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#camera bev qk attention 추출 스크립트
 """
 Extract camera-only BEV Q/K attention maps from BEVFusion
 Usage:
-    nohup python tools/extract_camera_qk_attention.py \
+    nohup python tools/extract_camera_bev_qk_attention.py \
         --cfg configs/nuscenes/det/qk/camera.yaml \
         --info full_nuscenes/full_nuscenes_infos_val_with_proj.pkl \
         --weight pretrained/camera-only-det.pth \
-        --out_dir results/qk_attn/fpn/camera > logs/camera_fpn_qk.log 2>&1 &
+        --out_dir results/qk_attn/bev/camera > logs/camera_bev_qk.log 2>&1 &
 """
 
 import os, argparse, math
@@ -30,7 +29,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_dir/'extract_camera_qk_attention.log'),
+        logging.FileHandler(log_dir/'extract_camera_bev_qk_attention.log'),
         logging.StreamHandler()
     ]
 )
@@ -85,6 +84,7 @@ class PackCameraMeta:
     def __call__(self, results):
         # Pack camera metadata into a DataContainer for batch processing
         meta_keys = [
+            'img_shape', 'pad_shape',
             'camera_intrinsics', 'camera2ego', 'cam2lidar',
             'lidar2cam', 'lidar2image', 'img_aug_matrix',
             'lidar2ego', 'timestamp'
@@ -92,7 +92,9 @@ class PackCameraMeta:
         metas = {}
         for key in meta_keys:
             if key in results:
-                metas[key] = results[key]
+                # Pop the DataContainer and extract its raw data
+                dc = results.pop(key)
+                metas[key] = dc.data
         results['camera_meta'] = DataContainer(metas, cpu_only=True)
         return results
 
@@ -104,9 +106,10 @@ camera_pipeline = [
     dict(type='Collect3D',
          keys=['img'],
          meta_keys=[
-             'camera_intrinsics','camera2ego','camera2lidar',
-             'lidar2camera','lidar2image','img_aug_matrix',
-             'lidar2ego','timestamp'
+             'img_shape', 'pad_shape',
+             'camera_intrinsics', 'camera2ego', 'cam2lidar',
+             'lidar2cam', 'lidar2image', 'img_aug_matrix',
+             'lidar2ego', 'timestamp'
          ]),
     dict(type='PackCameraMeta'),
 ]
@@ -145,6 +148,28 @@ model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
 load_checkpoint(model, args.weight, map_location='cpu')
 model.cuda().eval()
 
+# Monkey-patch bev_pool to log geometry and feature shapes
+vtrans = model.encoders.camera.vtransform
+orig_bev_pool = vtrans.bev_pool
+def bev_pool_debug(self, geom, x):
+    # Debug: match x and geom grid dims
+    B, N, D, fH, fW, C = x.shape
+    # geom shape is [B, N, D, Y, X, 3]
+    _, _, Dg, Y, X, _ = geom.shape
+    if D != Dg:
+        print(f"[WARN bev_pool] depth dim mismatch: x D={D}, geom D={Dg}")
+    if fH != Y or fW != X:
+        # Reshape and interpolate features to [B*N*D, C, fH, fW]
+        x_flat = x.permute(0,1,2,5,3,4).reshape(B*N*D, C, fH, fW)
+        x_flat = F.interpolate(x_flat, size=(Y, X), mode='bilinear', align_corners=False)
+        # Restore to [B, N, D, Y, X, C]
+        x = x_flat.view(B, N, D, C, Y, X).permute(0,1,2,4,5,3)
+        # print(f"[DEBUG bev_pool] Resized x to {tuple(x.shape)} to match geom grid {(Y, X)}")
+    # print(f"[DEBUG bev_pool] geom.shape={tuple(geom.shape)}, x.shape={tuple(x.shape)}")
+    return orig_bev_pool(geom, x)
+# Bind the debug version
+vtrans.bev_pool = bev_pool_debug.__get__(vtrans, type(vtrans))
+
 # --- 4) Q/K attention 계산 헬퍼 ---
 def compute_qk_attn(bev_feat: torch.Tensor):
     """
@@ -171,6 +196,7 @@ total_cams = num_batches * N_cam
 counter = 0
 
 for idx, batch in enumerate(loader):
+    logging.info(f"=== Start batch {idx+1}/{num_batches}, total views per batch: {N_cam} ===")
     # Convert list of numpy images to tensor (B=1, N, C, H, W)
     imgs_np = batch['img']  # list of N numpy arrays shape (H, W, 3)
     imgs_tensor = torch.stack(
@@ -182,21 +208,83 @@ for idx, batch in enumerate(loader):
 
     # for each view separately
     for cam in range(N):
+        logging.info(f"--- Processing view {cam+1}/{N_cam} of batch {idx+1} (global view {counter+1}/{total_cams}) ---")
         counter += 1
         single = img[:, cam]            # (1,3,H,W)
         with torch.no_grad():
-            # camera 백본 + 넥 → BEV features list
-            flat = single  # already tensor
+            flat = single  # alias current view tensor for backbone input
+            # 1) 이미지 평면 feature 생성 (backbone + FPN)
             feats = model.encoders.camera.backbone(flat)
-            bev_feats = model.encoders.camera.neck(feats)
-        # bev_feats 는 list(scale1, scale2,...), we pick 첫 번째
-        bev1 = bev_feats[0]               # (1, C1, h, w)
-        A    = compute_qk_attn(bev1)      # (1, hw, hw)
+            # Extract features and ensure a single tensor is passed to vtransform
+            neck_out = model.encoders.camera.neck(feats)
+            if isinstance(neck_out, (tuple, list)):
+                # print(f"[DEBUG] neck_out length = {len(neck_out)}")
+                # for idx_n, feat_n in enumerate(neck_out):
+                    # print(f"[DEBUG] neck_out[{idx_n}].shape = {feat_n.shape}")
+                # TODO: choose the correct FPN output index that matches BEV grid (e.g., 2 for P4)
+                img_feats = neck_out[-1]  # temporary fallback to last element
+            else:
+                img_feats = neck_out
+
+            # Ensure img_feats has a camera view dimension for vtransform
+            if img_feats.dim() == 4:
+                # [B, C, H, W] → [B, 1, C, H, W]
+                img_feats = img_feats.unsqueeze(1)
+
+            # 2) BEV 변환을 통해 BEV feature 추출
+            #    PackCameraMeta로 모아둔 metadata를 꺼내서 텐서로 변환
+            meta = batch['camera_meta'].data
+            mats = {
+                k: torch.as_tensor(meta[k], dtype=torch.float32, device='cuda').unsqueeze(0)
+                for k in meta
+            }
+            # Remove timestamp from metadata to avoid geometry dimension issues
+            mats.pop('timestamp', None)
+            # Provide default identity for lidar_aug_matrix if not present
+            if 'lidar_aug_matrix' not in mats or mats['lidar_aug_matrix'] is None:
+                # Create (B=1, N, 4, 4) identity matrices for lidar augmentation
+                mats['lidar_aug_matrix'] = torch.eye(4, dtype=torch.float32, device='cuda').unsqueeze(0).unsqueeze(0).expand(1, N, 4, 4).clone()
+
+            # Ensure lidar2ego has a per-view dimension
+            if 'lidar2ego' in mats:
+                if mats['lidar2ego'].dim() == 3:
+                    # Expand single lidar2ego matrix to per-camera views
+                    mats['lidar2ego'] = mats['lidar2ego'].unsqueeze(1).expand(1, N, 4, 4)
+
+            # Restrict per-view meta tensors to the current camera view
+            for k in ['camera2ego', 'cam2lidar', 'lidar2cam', 'lidar2image',
+                      'camera_intrinsics', 'img_aug_matrix', 'lidar_aug_matrix',
+                      'lidar2ego']:
+                mats[k] = mats[k][:, cam:cam+1]
+
+            # Debug: print shape info before vtransform
+            # print(f"[DEBUG] img_feats.shape = {img_feats.shape}")
+            # for key, tensor in mats.items():
+            #     print(f"[DEBUG] {key}.shape = {tuple(tensor.shape)}")
+
+            bev = model.encoders.camera.vtransform(
+                img_feats,
+                points=None,
+                radar=None,
+                camera2ego=mats['camera2ego'],
+                lidar2ego=mats.get('lidar2ego'),
+                lidar2camera=mats.get('lidar2cam'),
+                lidar2image=mats.get('lidar2image'),
+                camera_intrinsics=mats['camera_intrinsics'],
+                camera2lidar=mats.get('cam2lidar'),
+                img_aug_matrix=mats.get('img_aug_matrix'),
+                lidar_aug_matrix=mats['lidar_aug_matrix'],
+                img_shape=mats['img_shape'][0],
+                pad_shape=mats['pad_shape'][0]
+            )
+
+            # 3) BEV Q/K attention 계산
+            A = compute_qk_attn(bev)
 
         fn = save_dir / f"{idx:04d}_cam{cam:02d}_qk_attn.pt"
         torch.save(A.cpu(), fn)
 
         remaining = total_cams - counter
-        logging.info(f"[{counter}/{total_cams}] saved → {fn}   (남은: {remaining})")
+        logging.info(f"SAVED [{counter}/{total_cams}] → {fn} (remaining {remaining})")
 
 logging.info(f"✅ Done. 총 map 개수: {counter}")
